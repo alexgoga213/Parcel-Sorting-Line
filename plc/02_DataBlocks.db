@@ -1,0 +1,76 @@
+DATA_BLOCK "DB_Settings"
+TITLE = 'Machine parameters (retentive, editable on the HMI)'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+   VAR RETAIN
+      MmPerPulse : Real;                 // encoder resolution on the sorter belt
+      PusherPosMm : Array[1..3] of DInt; // pusher centre line, mm after the entry photo-eye
+      FireWindowMm : DInt;               // fire when the parcel centre is this close to the pusher
+      ExitPosMm : DInt;                  // exit photo-eye position
+      ExitToleranceMm : DInt;            // a parcel not seen this far after the exit eye is "lost"
+      MinLengthMm : DInt;                // shorter = debris / false trigger, ignored
+      MaxLengthMm : DInt;                // longer = oversize, always rejected
+      JamExtraMm : DInt;                 // entry eye blocked for MaxLength + this = jam
+      LaneEnabled : Array[1..3] of Bool; // operator can close a lane
+      StartWarning : Time;               // horn before the conveyors start
+      DrainTimeout : Time;               // controlled stop: maximum time to empty the sorter
+      PusherExtendTimeout : Time;
+      PusherRetractTimeout : Time;
+      MotorFeedbackTimeout : Time;
+      ExitBlockedTimeout : Time;         // reject chute jam
+   END_VAR
+
+BEGIN
+   MmPerPulse := 1.0;
+   PusherPosMm[1] := 1000;
+   PusherPosMm[2] := 2000;
+   PusherPosMm[3] := 3000;
+   FireWindowMm := 40;
+   ExitPosMm := 3600;
+   ExitToleranceMm := 300;
+   MinLengthMm := 60;
+   MaxLengthMm := 500;
+   JamExtraMm := 300;
+   LaneEnabled[1] := TRUE;
+   LaneEnabled[2] := TRUE;
+   LaneEnabled[3] := TRUE;
+   StartWarning := T#3S;
+   DrainTimeout := T#12S;
+   PusherExtendTimeout := T#800MS;
+   PusherRetractTimeout := T#800MS;
+   MotorFeedbackTimeout := T#1S;
+   ExitBlockedTimeout := T#2S;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB_HMI"
+TITLE = 'Interface to the operator panel (WinCC) - commands in, status out'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+NON_RETAIN
+   VAR
+      Cmd : Struct                        // pulses written by the HMI, cleared by the PLC
+         Start : Bool;
+         Stop : Bool;
+         Reset : Bool;
+         AckAlarms : Bool;
+         JogC1 : Bool;                    // manual mode only, held while pressed
+         JogC2 : Bool;
+         ManualFire : Array[1..3] of Bool;
+         ClearTracking : Bool;
+         ResetCounters : Bool;
+      END_STRUCT;
+      Sts : Struct
+         LineState : Int;                 // see FB_LineControl
+         AutoMode : Bool;
+         ReadyToStart : Bool;
+         ResetRequired : Bool;
+         ActiveAlarms : DWord;            // one bit per alarm, see FB_Alarms
+         UnackAlarms : DWord;
+         FirstOut : Int;                  // first alarm that stopped the line
+         ParcelsOnBelt : Int;
+         Counters : "UDT_LaneCounters";
+      END_STRUCT;
+   END_VAR
+
+BEGIN
+END_DATA_BLOCK

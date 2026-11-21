@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parcel Sorting Line – PLC simulator</title>
+  <meta name="description" content="Siemens S7 parcel sorting line written in SCL for TIA Portal, running live in the browser: encoder tracking, pneumatic pushers, alarms and an operator HMI.">
+  <link rel="icon" href="sim/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="sim/style.css">
+  <script>
+    try { const t = localStorage.getItem('pso.theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="12" width="28" height="9" rx="2" fill="currentColor" opacity=".25"/><rect x="5" y="6" width="8" height="8" rx="1" fill="#c8a675"/><rect x="17" y="7" width="7" height="7" rx="1" fill="#c8a675"/><rect x="21" y="23" width="4" height="7" fill="currentColor"/></svg>
+      <div><h1>Parcel Sorting Line</h1><p>Siemens S7 program (SCL, TIA Portal) running live in your browser</p></div>
+    </div>
+    <div class="top-meta">
+      <span class="clock" id="clock" title="Simulated PLC time">00:00:00</span>
+      <label class="speed">Speed <select id="speed"><option value="0">Pause</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+      <a class="link" href="https://github.com/alexgoga213/Parcel-Sorting-Line" target="_blank" rel="noopener">Source code</a>
+      <button class="icon" id="theme" type="button" aria-label="Toggle dark mode">◐</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="card machine" aria-label="Machine view">
+      <div class="card-head"><h2>Line overview</h2><span class="hint">Top view. Ghost outlines and tags show where the PLC <em>thinks</em> each parcel is (encoder tracking).</span></div>
+      <div id="machine"></div>
+      <div class="legend">
+        <span><i class="lg run"></i>motor running</span><span><i class="lg stop"></i>stopped</span><span><i class="lg fault"></i>fault</span>
+        <span><i class="lg beam"></i>photo-eye blocked</span><span><i class="lg ghost"></i>PLC tracking image</span>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="card panel" aria-label="Operator panel">
+        <div class="card-head"><h2>Operator panel</h2></div>
+        <div class="panel-body">
+          <div id="tower" class="tower" aria-label="Stack light"></div>
+          <div class="buttons">
+            <button class="pb green" id="pb-start" type="button"><span>I</span>Start</button>
+            <button class="pb red" id="pb-stop" type="button"><span>O</span>Stop</button>
+            <button class="pb blue" id="pb-reset" type="button"><span>R</span>Reset</button>
+            <button class="key" id="key-mode" type="button" aria-pressed="true"><span class="key-dial"></span><b>AUTO</b><small>click for manual</small></button>
+            <button class="estop" id="pb-estop" type="button" aria-pressed="false"><span>EMERGENCY<br>STOP</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card hmi" aria-label="HMI">
+        <div class="hmi-tabs" role="tablist">
+          <button role="tab" aria-selected="true" data-tab="overview">Overview</button>
+          <button role="tab" aria-selected="false" data-tab="alarms">Alarms <b id="alarm-badge" hidden></b></button>
+          <button role="tab" aria-selected="false" data-tab="tracking">Tracking</button>
+          <button role="tab" aria-selected="false" data-tab="manual">Manual</button>
+        </div>
+        <div id="hmi-view" class="hmi-view"></div>
+      </section>
+    </aside>
+
+    <section class="card faults" aria-label="Fault injection">
+      <div class="card-head"><h2>Inject a fault</h2><span class="hint">See how the PLC reacts, then fix the cause and press Reset.</span></div>
+      <div class="fault-grid" id="faults"></div>
+    </section>
+
+    <section class="card feed" aria-label="Parcel feed">
+      <div class="card-head"><h2>Parcel feed</h2></div>
+      <div class="feed-body" id="feed"></div>
+    </section>
+
+    <section class="card io" aria-label="I/O monitor">
+      <div class="card-head"><h2>I/O monitor</h2><span class="hint">Process image, like a watch table in TIA Portal.</span></div>
+      <div class="io-grid" id="io"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>The PLC logic in <code>sim/plc.js</code> is a line-by-line port of the SCL blocks in <code>plc/</code>; the belts, sensors and cylinders are simulated in <code>sim/plant.js</code>. One PLC cycle = 10 ms.</p>
+  </footer>
+  <script type="module" src="sim/app.js"></script>
+</body>
+</html>

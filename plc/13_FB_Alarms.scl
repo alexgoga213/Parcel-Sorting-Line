@@ -1,0 +1,69 @@
+FUNCTION_BLOCK "FB_Alarms"
+TITLE = 'Alarm handling: latch, acknowledge, reset, first-out'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+//  One bit per alarm (see the alarm list in the README).
+//  Bits 0..15 are faults: they stop the line and need Reset once the cause is gone.
+//  Bits 16..31 are warnings: shown on the HMI, the line keeps running.
+//  Latched  = condition present now, or was present and not yet reset.
+//  Unack    = appeared and not yet acknowledged by the operator (red light blinks).
+//  FirstOut = the fault that stopped the line first (helps find the root cause).
+
+   VAR_INPUT
+      Conditions : DWord;
+      Ack : Bool;
+      Reset : Bool;                 // Reset also acknowledges
+   END_VAR
+
+   VAR_OUTPUT
+      Latched : DWord;
+      Unack : DWord;
+      FaultActive : Bool;           // at least one latched fault
+      WarningActive : Bool;
+      FirstOut : Int;               // -1 = none
+   END_VAR
+
+   VAR
+      PrevConditions : DWord;
+   END_VAR
+
+   VAR_TEMP
+      newBits : DWord;
+      i : Int;
+      hadFault : Bool;
+   END_VAR
+
+   VAR CONSTANT
+      FAULT_MASK : DWord := 16#0000_FFFF;
+   END_VAR
+
+BEGIN
+   #hadFault := #FaultActive;
+   #newBits := #Conditions AND NOT #PrevConditions;
+   #PrevConditions := #Conditions;
+
+   #Latched := #Latched OR #Conditions;
+   #Unack := #Unack OR #newBits;
+
+   IF #Ack OR #Reset THEN
+      #Unack := 16#0;
+   END_IF;
+   IF #Reset THEN
+      // keep only what is still present
+      #Latched := #Conditions;
+   END_IF;
+
+   #FaultActive := (#Latched AND #FAULT_MASK) <> 16#0;
+   #WarningActive := (#Latched AND NOT #FAULT_MASK) <> 16#0;
+
+   IF NOT #FaultActive THEN
+      #FirstOut := -1;
+   ELSIF NOT #hadFault THEN
+      // the line just stopped: remember the lowest new fault bit
+      FOR #i := 0 TO 15 DO
+         IF #FirstOut < 0 AND (SHR(IN := #Latched, N := #i) AND 16#1) <> 16#0 THEN
+            #FirstOut := #i;
+         END_IF;
+      END_FOR;
+   END_IF;
+END_FUNCTION_BLOCK

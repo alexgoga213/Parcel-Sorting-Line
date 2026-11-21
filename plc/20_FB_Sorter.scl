@@ -1,0 +1,208 @@
+FUNCTION_BLOCK "FB_Sorter"
+TITLE = 'Parcel sorting line - main program'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+//  Reads the I/O (PLC tag table, see plc/PLC_Tags.csv), runs the line state machine,
+//  tracking, motors and pushers, and publishes everything for the HMI in "DB_HMI".
+//  Called once per cycle from OB1 with instance DB "iSorter".
+
+   VAR
+      Line : "FB_LineControl";
+      C1 : "FB_Motor";              // infeed conveyor
+      C2 : "FB_Motor";              // sorter conveyor (with encoder)
+      Pusher1 : "FB_Pusher";
+      Pusher2 : "FB_Pusher";
+      Pusher3 : "FB_Pusher";
+      Tracking : "FB_Tracking";
+      Alarms : "FB_Alarms";
+      Lights : "FB_StackLight";
+      Count : "FB_Counters";
+      tonExitBlocked {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+      tonLane1Full {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+      tonLane2Full {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+      tonLane3Full {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+      LostWarning : Bool;
+      UnexpectedWarning : Bool;
+   END_VAR
+
+   VAR_TEMP
+      autoMode : Bool;
+      manual : Bool;
+      start : Bool;
+      stop : Bool;
+      reset : Bool;
+      laneFull : Array[1..3] of Bool;
+      pusherReady : Array[1..3] of Bool;
+      pusherDone : Array[1..3] of Bool;
+      cond : DWord;
+   END_VAR
+
+BEGIN
+   REGION Operator commands: panel buttons OR HMI
+      #autoMode := "S_Auto";
+      #start := "S_Start" OR "DB_HMI".Cmd.Start;
+      #stop := NOT "S_Stop" OR "DB_HMI".Cmd.Stop;        // S_Stop is a NC contact
+      #reset := "S_Reset" OR "DB_HMI".Cmd.Reset;
+      #manual := NOT #autoMode AND #Line.State = 0 AND "K_EStopOk";
+   END_REGION
+
+   REGION Line state machine
+      #Line(AutoMode := #autoMode,
+            Start := #start,
+            Stop := #stop,
+            Reset := #reset,
+            EStopOk := "K_EStopOk",
+            FaultActive := #Alarms.FaultActive,
+            BeltEmpty := #Tracking.Count = 0,
+            StartWarning := "DB_Settings".StartWarning,
+            DrainTimeout := "DB_Settings".DrainTimeout);
+   END_REGION
+
+   REGION Conveyors
+      #C1(Run := #Line.RunInfeed OR (#manual AND "DB_HMI".Cmd.JogC1),
+          RunningFb := "C1_RunFb",
+          OverloadOk := "C1_OverloadOk",
+          FeedbackTimeout := "DB_Settings".MotorFeedbackTimeout,
+          Reset := #reset);
+      #C2(Run := #Line.RunSorter OR (#manual AND "DB_HMI".Cmd.JogC2),
+          RunningFb := "C2_RunFb",
+          OverloadOk := "C2_OverloadOk",
+          FeedbackTimeout := "DB_Settings".MotorFeedbackTimeout,
+          Reset := #reset);
+      "K_C1" := #C1.Contactor AND "K_EStopOk";
+      "K_C2" := #C2.Contactor AND "K_EStopOk";
+   END_REGION
+
+   REGION Lane full sensors (1 s debounce)
+      #tonLane1Full(IN := "B_Lane1Full", PT := T#1S);
+      #tonLane2Full(IN := "B_Lane2Full", PT := T#1S);
+      #tonLane3Full(IN := "B_Lane3Full", PT := T#1S);
+      #laneFull[1] := #tonLane1Full.Q;
+      #laneFull[2] := #tonLane2Full.Q;
+      #laneFull[3] := #tonLane3Full.Q;
+   END_REGION
+
+   REGION Tracking
+      // pusher status from the previous cycle (the pushers run after the tracking)
+      #pusherReady[1] := #Pusher1.Ready;
+      #pusherReady[2] := #Pusher2.Ready;
+      #pusherReady[3] := #Pusher3.Ready;
+      #pusherDone[1] := #Pusher1.Done;
+      #pusherDone[2] := #Pusher2.Done;
+      #pusherDone[3] := #Pusher3.Done;
+      #Tracking(EncoderCount := "HSC_Sorter",
+                EntryPE := "B_EntryPE",
+                HeightLow := "B_HeightLow",
+                HeightMid := "B_HeightMid",
+                HeightHigh := "B_HeightHigh",
+                ExitPE := "B_ExitPE",
+                PusherReady := #pusherReady,
+                PusherDone := #pusherDone,
+                LaneFull := #laneFull,
+                Clear := "DB_HMI".Cmd.ClearTracking AND #Line.State = 0);
+   END_REGION
+
+   REGION Pushers
+      #Pusher1(Fire := #Tracking.FirePusher[1] OR (#manual AND "DB_HMI".Cmd.ManualFire[1]),
+               Retracted := "P1_Retracted", Extended := "P1_Extended", AirOk := "B_AirOk",
+               ExtendTimeout := "DB_Settings".PusherExtendTimeout,
+               RetractTimeout := "DB_Settings".PusherRetractTimeout,
+               Reset := #reset);
+      #Pusher2(Fire := #Tracking.FirePusher[2] OR (#manual AND "DB_HMI".Cmd.ManualFire[2]),
+               Retracted := "P2_Retracted", Extended := "P2_Extended", AirOk := "B_AirOk",
+               ExtendTimeout := "DB_Settings".PusherExtendTimeout,
+               RetractTimeout := "DB_Settings".PusherRetractTimeout,
+               Reset := #reset);
+      #Pusher3(Fire := #Tracking.FirePusher[3] OR (#manual AND "DB_HMI".Cmd.ManualFire[3]),
+               Retracted := "P3_Retracted", Extended := "P3_Extended", AirOk := "B_AirOk",
+               ExtendTimeout := "DB_Settings".PusherExtendTimeout,
+               RetractTimeout := "DB_Settings".PusherRetractTimeout,
+               Reset := #reset);
+      "Y_Pusher1" := #Pusher1.Valve AND "K_EStopOk";
+      "Y_Pusher2" := #Pusher2.Valve AND "K_EStopOk";
+      "Y_Pusher3" := #Pusher3.Valve AND "K_EStopOk";
+   END_REGION
+
+   REGION Alarms
+      #tonExitBlocked(IN := "B_ExitPE" AND #Line.RunSorter, PT := "DB_Settings".ExitBlockedTimeout);
+      IF #Tracking.Lost THEN
+         #LostWarning := TRUE;
+      END_IF;
+      IF #Tracking.Unexpected THEN
+         #UnexpectedWarning := TRUE;
+      END_IF;
+      IF #reset OR "DB_HMI".Cmd.AckAlarms THEN
+         #LostWarning := FALSE;
+         #UnexpectedWarning := FALSE;
+      END_IF;
+
+      #cond := 16#0;
+      // faults (stop the line)
+      #cond.%X0 := NOT "K_EStopOk";
+      #cond.%X1 := NOT "B_AirOk";
+      #cond.%X2 := #C1.FaultOverload;
+      #cond.%X3 := #C1.FaultFeedback;
+      #cond.%X4 := #C2.FaultOverload;
+      #cond.%X5 := #C2.FaultFeedback;
+      #cond.%X6 := #Pusher1.FaultExtend;
+      #cond.%X7 := #Pusher1.FaultRetract;
+      #cond.%X8 := #Pusher2.FaultExtend;
+      #cond.%X9 := #Pusher2.FaultRetract;
+      #cond.%X10 := #Pusher3.FaultExtend;
+      #cond.%X11 := #Pusher3.FaultRetract;
+      #cond.%X12 := #Tracking.JamEntry;
+      #cond.%X13 := "B_RejectBinFull";
+      #cond.%X14 := #tonExitBlocked.Q;
+      #cond.%X15 := #Tracking.Overflow;
+      // warnings (line keeps running)
+      #cond.%X16 := #laneFull[1];
+      #cond.%X17 := #laneFull[2];
+      #cond.%X18 := #laneFull[3];
+      #cond.%X19 := #LostWarning;
+      #cond.%X20 := #UnexpectedWarning;
+
+      #Alarms(Conditions := #cond,
+              Ack := "DB_HMI".Cmd.AckAlarms,
+              Reset := #reset);
+   END_REGION
+
+   REGION Stack light
+      #Lights(LineState := #Line.State,
+              AutoMode := #autoMode,
+              WarningActive := #Alarms.WarningActive,
+              UnackFault := (#Alarms.Unack AND 16#0000_FFFF) <> 16#0,
+              StartHorn := #Line.Horn);
+      "H_Green" := #Lights.Green;
+      "H_Yellow" := #Lights.Yellow;
+      "H_Red" := #Lights.Red;
+      "H_Horn" := #Lights.Horn;
+      "H_ResetLamp" := #Line.ResetRequired AND #Lights.Red;
+   END_REGION
+
+   REGION Counters and HMI status
+      #Count(DivertedLane := #Tracking.DivertedLane,
+             Rejected := #Tracking.Rejected,
+             Oversize := #Tracking.Oversize,
+             Lost := #Tracking.Lost,
+             ResetCounters := "DB_HMI".Cmd.ResetCounters,
+             Counters := "DB_HMI".Sts.Counters);
+
+      "DB_HMI".Sts.LineState := #Line.State;
+      "DB_HMI".Sts.AutoMode := #autoMode;
+      "DB_HMI".Sts.ReadyToStart := #Line.ReadyToStart;
+      "DB_HMI".Sts.ResetRequired := #Line.ResetRequired;
+      "DB_HMI".Sts.ActiveAlarms := #Alarms.Latched;
+      "DB_HMI".Sts.UnackAlarms := #Alarms.Unack;
+      "DB_HMI".Sts.FirstOut := #Alarms.FirstOut;
+      "DB_HMI".Sts.ParcelsOnBelt := #Tracking.Count;
+   END_REGION
+
+   REGION Clear one-shot HMI commands (JogC1/JogC2/ManualFire are held by the panel)
+      "DB_HMI".Cmd.Start := FALSE;
+      "DB_HMI".Cmd.Stop := FALSE;
+      "DB_HMI".Cmd.Reset := FALSE;
+      "DB_HMI".Cmd.AckAlarms := FALSE;
+      "DB_HMI".Cmd.ClearTracking := FALSE;
+      "DB_HMI".Cmd.ResetCounters := FALSE;
+   END_REGION
+END_FUNCTION_BLOCK

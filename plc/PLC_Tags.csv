@@ -1,0 +1,37 @@
+Name,Data Type,Logical Address,Comment
+S_Start,Bool,%I0.0,Start push button (NO)
+S_Stop,Bool,%I0.1,Stop push button (NC: 1 = not pressed)
+S_Reset,Bool,%I0.2,Reset push button (NO)
+K_EStopOk,Bool,%I0.3,Safety relay: emergency stop circuit closed
+S_Auto,Bool,%I0.4,Mode selector: 1 = automatic / 0 = manual
+B_AirOk,Bool,%I0.5,Compressed air pressure switch
+B_EntryPE,Bool,%I1.0,Entry photo-eye (1 = blocked)
+B_HeightLow,Bool,%I1.1,Height beam 1 (40 mm)
+B_HeightMid,Bool,%I1.2,Height beam 2 (150 mm)
+B_HeightHigh,Bool,%I1.3,Height beam 3 (300 mm)
+B_ExitPE,Bool,%I1.4,Exit photo-eye before the reject chute (1 = blocked)
+B_RejectBinFull,Bool,%I1.5,Reject bin full sensor
+C1_RunFb,Bool,%I2.0,Infeed conveyor contactor auxiliary contact
+C1_OverloadOk,Bool,%I2.1,Infeed motor protection breaker (NC)
+C2_RunFb,Bool,%I2.2,Sorter conveyor contactor auxiliary contact
+C2_OverloadOk,Bool,%I2.3,Sorter motor protection breaker (NC)
+P1_Retracted,Bool,%I3.0,Pusher 1 retracted (reed switch)
+P1_Extended,Bool,%I3.1,Pusher 1 extended (reed switch)
+P2_Retracted,Bool,%I3.2,Pusher 2 retracted
+P2_Extended,Bool,%I3.3,Pusher 2 extended
+P3_Retracted,Bool,%I3.4,Pusher 3 retracted
+P3_Extended,Bool,%I3.5,Pusher 3 extended
+B_Lane1Full,Bool,%I4.0,Lane 1 accumulation full (photo-eye)
+B_Lane2Full,Bool,%I4.1,Lane 2 accumulation full
+B_Lane3Full,Bool,%I4.2,Lane 3 accumulation full
+HSC_Sorter,DInt,%ID1000,High-speed counter: sorter belt encoder (1 pulse = 1 mm)
+K_C1,Bool,%Q0.0,Infeed conveyor contactor
+K_C2,Bool,%Q0.1,Sorter conveyor contactor
+Y_Pusher1,Bool,%Q0.2,Pusher 1 valve (5/2 monostable: 1 = extend)
+Y_Pusher2,Bool,%Q0.3,Pusher 2 valve
+Y_Pusher3,Bool,%Q0.4,Pusher 3 valve
+H_Green,Bool,%Q1.0,Stack light green
+H_Yellow,Bool,%Q1.1,Stack light yellow
+H_Red,Bool,%Q1.2,Stack light red
+H_Horn,Bool,%Q1.3,Horn
+H_ResetLamp,Bool,%Q1.4,Reset push button lamp

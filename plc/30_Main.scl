@@ -1,0 +1,34 @@
+DATA_BLOCK "iSorter"
+TITLE = 'Instance of the main program'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+NON_RETAIN
+"FB_Sorter"
+
+BEGIN
+END_DATA_BLOCK
+
+ORGANIZATION_BLOCK "Main"
+TITLE = 'Program cycle'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+
+BEGIN
+   "iSorter"();
+END_ORGANIZATION_BLOCK
+
+ORGANIZATION_BLOCK "Startup"
+TITLE = 'Complete restart: the line always starts in STOPPED and needs a Reset after power loss'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+
+BEGIN
+   "DB_HMI".Cmd.Start := FALSE;
+   "DB_HMI".Cmd.JogC1 := FALSE;
+   "DB_HMI".Cmd.JogC2 := FALSE;
+   "DB_HMI".Cmd.ManualFire[1] := FALSE;
+   "DB_HMI".Cmd.ManualFire[2] := FALSE;
+   "DB_HMI".Cmd.ManualFire[3] := FALSE;
+   // parcels left on the belt after a power loss can no longer be trusted
+   "DB_HMI".Cmd.ClearTracking := TRUE;
+END_ORGANIZATION_BLOCK

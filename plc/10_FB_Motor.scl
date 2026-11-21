@@ -1,0 +1,52 @@
+FUNCTION_BLOCK "FB_Motor"
+TITLE = 'Conveyor motor: contactor output with feedback and overload supervision'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+//  Drives one contactor. Faults when the motor protection breaker trips or when the
+//  contactor auxiliary contact does not follow the command within FeedbackTimeout.
+//  The fault latches until Reset.
+
+   VAR_INPUT
+      Run : Bool;                  // run request from the sequence (or jog)
+      RunningFb : Bool;            // contactor auxiliary contact
+      OverloadOk : Bool;           // motor protection breaker, 1 = healthy (NC contact)
+      FeedbackTimeout : Time := T#1S;
+      Reset : Bool;
+   END_VAR
+
+   VAR_OUTPUT
+      Contactor : Bool;            // to the contactor coil
+      Fault : Bool;
+      FaultOverload : Bool;
+      FaultFeedback : Bool;
+   END_VAR
+
+   VAR
+      tonFeedback {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+   END_VAR
+
+BEGIN
+   REGION Supervision
+      // Feedback must follow the command in both directions
+      #tonFeedback(IN := #Contactor XOR #RunningFb,
+                   PT := #FeedbackTimeout);
+
+      IF NOT #OverloadOk THEN
+         #FaultOverload := TRUE;
+      END_IF;
+      IF #tonFeedback.Q THEN
+         #FaultFeedback := TRUE;
+      END_IF;
+
+      IF #Reset AND #OverloadOk AND NOT #tonFeedback.Q THEN
+         #FaultOverload := FALSE;
+         #FaultFeedback := FALSE;
+      END_IF;
+
+      #Fault := #FaultOverload OR #FaultFeedback;
+   END_REGION
+
+   REGION Output
+      #Contactor := #Run AND NOT #Fault;
+   END_REGION
+END_FUNCTION_BLOCK

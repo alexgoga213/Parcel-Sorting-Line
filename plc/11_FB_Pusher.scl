@@ -1,0 +1,83 @@
+FUNCTION_BLOCK "FB_Pusher"
+TITLE = 'Pneumatic pusher: one stroke out and back, with end-position supervision'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+//  Monostable 5/2 valve: valve ON = extend, OFF = retract (spring return).
+//  A rising edge on Fire starts one stroke. The cylinder must leave the retracted
+//  sensor and reach the extended sensor within ExtendTimeout, then return within
+//  RetractTimeout. Done pulses for one scan when the extended position is reached
+//  (the parcel has been pushed off the belt).
+//
+//  State: 0 = idle (retracted), 1 = extending, 2 = retracting, 9 = fault
+
+   VAR_INPUT
+      Fire : Bool;
+      Retracted : Bool;            // reed switch, retracted end position
+      Extended : Bool;             // reed switch, extended end position
+      AirOk : Bool;
+      ExtendTimeout : Time := T#800MS;
+      RetractTimeout : Time := T#800MS;
+      Reset : Bool;
+   END_VAR
+
+   VAR_OUTPUT
+      Valve : Bool;
+      Ready : Bool;                // idle, retracted, no fault: may be fired
+      Done : Bool;                 // one-scan pulse: parcel pushed
+      FaultExtend : Bool;
+      FaultRetract : Bool;
+      State : Int;
+   END_VAR
+
+   VAR
+      rtFire {InstructionName := 'R_TRIG'; LibVersion := '1.0'} : R_TRIG;
+      tonStep {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+      prevState : Int;
+   END_VAR
+
+BEGIN
+   #rtFire(CLK := #Fire);
+   #Done := FALSE;
+
+   // Step timer restarts on every state change
+   #tonStep(IN := #State = #prevState AND (#State = 1 OR #State = 2),
+            PT := SEL(G := #State = 2, IN0 := #ExtendTimeout, IN1 := #RetractTimeout));
+   #prevState := #State;
+
+   CASE #State OF
+      0:  // idle
+         IF #rtFire.Q AND #Retracted AND #AirOk THEN
+            #State := 1;
+         END_IF;
+
+      1:  // extending
+         IF #Extended THEN
+            #Done := TRUE;
+            #State := 2;
+         ELSIF #tonStep.Q OR NOT #AirOk THEN
+            #FaultExtend := TRUE;
+            #State := 9;
+         END_IF;
+
+      2:  // retracting
+         IF #Retracted THEN
+            #State := 0;
+         ELSIF #tonStep.Q THEN
+            #FaultRetract := TRUE;
+            #State := 9;
+         END_IF;
+
+      9:  // fault: valve off, wait for reset with the cylinder back home
+         IF #Reset AND #Retracted THEN
+            #FaultExtend := FALSE;
+            #FaultRetract := FALSE;
+            #State := 0;
+         END_IF;
+
+      ELSE
+         #State := 9;
+   END_CASE;
+
+   #Valve := #State = 1;
+   #Ready := #State = 0 AND #Retracted AND #AirOk;
+END_FUNCTION_BLOCK

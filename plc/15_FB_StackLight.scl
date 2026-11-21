@@ -1,0 +1,45 @@
+FUNCTION_BLOCK "FB_StackLight"
+TITLE = 'Stack light and horn'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+//  Green  steady = running,  flashing = starting
+//  Yellow steady = manual mode or controlled stop, flashing = warning active
+//  Red    steady = fault / emergency stop, flashing = alarm not acknowledged
+//  Horn   start warning, and 2 s when a new fault appears
+
+   VAR_INPUT
+      LineState : Int;
+      AutoMode : Bool;
+      WarningActive : Bool;
+      UnackFault : Bool;
+      StartHorn : Bool;
+   END_VAR
+
+   VAR_OUTPUT
+      Green : Bool;
+      Yellow : Bool;
+      Red : Bool;
+      Horn : Bool;
+   END_VAR
+
+   VAR
+      tonOn {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+      tonOff {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+      tonFaultHorn {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+      Blink : Bool;
+   END_VAR
+
+BEGIN
+   // 1 Hz blink generator
+   #tonOn(IN := NOT #tonOff.Q, PT := T#500MS);
+   #tonOff(IN := #tonOn.Q, PT := T#500MS);
+   #Blink := #tonOn.Q;
+
+   #Green := #LineState = 2 OR (#LineState = 1 AND #Blink);
+   #Yellow := ((NOT #AutoMode OR #LineState = 3) AND #LineState <> 4 AND #LineState <> 5)
+              OR (#WarningActive AND #Blink);
+   #Red := ((#LineState = 4 OR #LineState = 5) AND NOT #UnackFault) OR (#UnackFault AND #Blink);
+
+   #tonFaultHorn(IN := #UnackFault, PT := T#2S);
+   #Horn := #StartHorn OR (#UnackFault AND NOT #tonFaultHorn.Q);
+END_FUNCTION_BLOCK

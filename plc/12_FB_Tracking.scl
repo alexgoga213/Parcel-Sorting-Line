@@ -1,0 +1,264 @@
+FUNCTION_BLOCK "FB_Tracking"
+TITLE = 'Parcel tracking on the sorter belt: measure, classify, follow by encoder, divert'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+//  Every parcel gets a slot when its leading edge breaks the entry photo-eye.
+//  From then on its position is updated from the belt encoder (no timers, so the
+//  tracking stays correct if the belt slows down or stops).
+//
+//  - While the entry eye is blocked: the three height beams give the size class.
+//  - When the trailing edge clears it: length is known, the target lane is chosen
+//    (size class -> lane 1..3, oversize / unknown / closed lane -> reject).
+//  - When the parcel centre reaches its pusher: fire, if the pusher is ready and the
+//    lane is not full; otherwise the parcel continues to the reject chute.
+//  - Pusher Done removes the parcel; the exit eye removes rejected parcels.
+//  - A parcel that passes the exit without being seen is reported as lost.
+
+   VAR_INPUT
+      EncoderCount : DInt;          // high-speed counter value of the sorter belt
+      EntryPE : Bool;               // 1 = beam blocked
+      HeightLow : Bool;
+      HeightMid : Bool;
+      HeightHigh : Bool;
+      ExitPE : Bool;
+      PusherReady : Array[1..3] of Bool;
+      PusherDone : Array[1..3] of Bool;
+      LaneFull : Array[1..3] of Bool;
+      Clear : Bool;                 // forget all tracked parcels
+   END_VAR
+
+   VAR_OUTPUT
+      FirePusher : Array[1..3] of Bool;  // one-scan pulses
+      DivertedLane : Int;           // one-scan: 1..3 when a parcel left the belt into a lane
+      Rejected : Bool;              // one-scan: parcel reached the reject chute
+      Oversize : Bool;              // one-scan: parcel measured too long
+      Lost : Bool;                  // one-scan: parcel never seen at the exit
+      Unexpected : Bool;            // one-scan: exit eye saw a parcel that was not tracked
+      JamEntry : Bool;              // entry eye blocked far longer than any valid parcel
+      Overflow : Bool;              // more parcels than tracking slots
+      Count : Int;                  // parcels currently tracked
+   END_VAR
+
+   VAR
+      Parcels : Array[0..15] of "UDT_Parcel";
+      NextId : DInt := 1;
+      MeasuringSlot : Int := -1;    // slot of the parcel under the entry eye
+      MeasuredClass : Int;
+      FiredSlot : Array[1..3] of Int := [-1, -1, -1];
+      LastCount : DInt;
+      AccMm : Real;
+      InitDone : Bool;
+      rtEntry {InstructionName := 'R_TRIG'; LibVersion := '1.0'} : R_TRIG;
+      ftEntry {InstructionName := 'F_TRIG'; LibVersion := '1.0'} : F_TRIG;
+      rtExit {InstructionName := 'R_TRIG'; LibVersion := '1.0'} : R_TRIG;
+   END_VAR
+
+   VAR_TEMP
+      i : Int;
+      lane : Int;
+      slot : Int;
+      stepMm : DInt;
+      centreMm : DInt;
+      oldestId : DInt;
+   END_VAR
+
+   VAR CONSTANT
+      LAST_SLOT : Int := 15;
+   END_VAR
+
+BEGIN
+   REGION One-scan outputs
+      FOR #lane := 1 TO 3 DO
+         #FirePusher[#lane] := FALSE;
+      END_FOR;
+      #DivertedLane := 0;
+      #Rejected := FALSE;
+      #Oversize := FALSE;
+      #Lost := FALSE;
+      #Unexpected := FALSE;
+   END_REGION
+
+   REGION Clear
+      IF #Clear THEN
+         FOR #i := 0 TO #LAST_SLOT DO
+            #Parcels[#i].Active := FALSE;
+         END_FOR;
+         #MeasuringSlot := -1;
+         FOR #lane := 1 TO 3 DO
+            #FiredSlot[#lane] := -1;
+         END_FOR;
+         #Overflow := FALSE;
+      END_IF;
+   END_REGION
+
+   REGION Encoder: belt movement since the last scan
+      IF NOT #InitDone THEN
+         #LastCount := #EncoderCount;
+         #InitDone := TRUE;
+      END_IF;
+      #AccMm := #AccMm + DINT_TO_REAL(#EncoderCount - #LastCount) * "DB_Settings".MmPerPulse;
+      #LastCount := #EncoderCount;
+      #stepMm := TRUNC(#AccMm);
+      #AccMm := #AccMm - DINT_TO_REAL(#stepMm);
+
+      FOR #i := 0 TO #LAST_SLOT DO
+         IF #Parcels[#i].Active THEN
+            #Parcels[#i].LeadMm := #Parcels[#i].LeadMm + #stepMm;
+         END_IF;
+      END_FOR;
+   END_REGION
+
+   REGION Entry: new parcel, height and length measurement
+      #rtEntry(CLK := #EntryPE);
+      #ftEntry(CLK := #EntryPE);
+
+      IF #rtEntry.Q THEN
+         #slot := -1;
+         FOR #i := 0 TO #LAST_SLOT DO
+            IF NOT #Parcels[#i].Active AND #slot < 0 THEN
+               #slot := #i;
+            END_IF;
+         END_FOR;
+         IF #slot >= 0 THEN
+            #Parcels[#slot].Active := TRUE;
+            #Parcels[#slot].Id := #NextId;
+            #Parcels[#slot].LeadMm := 0;
+            #Parcels[#slot].LengthMm := 0;
+            #Parcels[#slot].Measured := FALSE;
+            #Parcels[#slot].SizeClass := 0;
+            #Parcels[#slot].TargetLane := 0;
+            #Parcels[#slot].PusherFired := FALSE;
+            #NextId := #NextId + 1;
+            #MeasuringSlot := #slot;
+            #MeasuredClass := 0;
+         ELSE
+            #Overflow := TRUE;
+            #MeasuringSlot := -1;
+         END_IF;
+      END_IF;
+
+      // Highest beam broken while the parcel passes = size class
+      IF #EntryPE AND #MeasuringSlot >= 0 THEN
+         IF #HeightHigh THEN
+            #MeasuredClass := 3;
+         ELSIF #HeightMid AND #MeasuredClass < 2 THEN
+            #MeasuredClass := 2;
+         ELSIF #HeightLow AND #MeasuredClass < 1 THEN
+            #MeasuredClass := 1;
+         END_IF;
+         // Jam: blocked much longer than the longest valid parcel
+         IF #Parcels[#MeasuringSlot].LeadMm > "DB_Settings".MaxLengthMm + "DB_Settings".JamExtraMm THEN
+            #JamEntry := TRUE;
+         END_IF;
+      END_IF;
+
+      IF #ftEntry.Q AND #MeasuringSlot >= 0 THEN
+         #slot := #MeasuringSlot;
+         #MeasuringSlot := -1;
+         #Parcels[#slot].LengthMm := #Parcels[#slot].LeadMm;
+         #Parcels[#slot].Measured := TRUE;
+         #Parcels[#slot].SizeClass := #MeasuredClass;
+
+         IF #Parcels[#slot].LengthMm < "DB_Settings".MinLengthMm THEN
+            // debris or a flicker of the photo-eye: not a parcel
+            #Parcels[#slot].Active := FALSE;
+         ELSIF #Parcels[#slot].LengthMm > "DB_Settings".MaxLengthMm THEN
+            #Parcels[#slot].TargetLane := 0;
+            #Oversize := TRUE;
+         ELSIF #MeasuredClass >= 1 AND #MeasuredClass <= 3 THEN
+            IF "DB_Settings".LaneEnabled[#MeasuredClass] THEN
+               #Parcels[#slot].TargetLane := #MeasuredClass;
+            ELSE
+               #Parcels[#slot].TargetLane := 0;
+            END_IF;
+         ELSE
+            #Parcels[#slot].TargetLane := 0;
+         END_IF;
+      END_IF;
+
+      IF NOT #EntryPE THEN
+         #JamEntry := FALSE;
+      END_IF;
+   END_REGION
+
+   REGION Divert: fire the pusher when the parcel centre arrives
+      FOR #i := 0 TO #LAST_SLOT DO
+         IF #Parcels[#i].Active AND #Parcels[#i].Measured AND NOT #Parcels[#i].PusherFired
+            AND #Parcels[#i].TargetLane >= 1 AND #Parcels[#i].TargetLane <= 3
+         THEN
+            #lane := #Parcels[#i].TargetLane;
+            #centreMm := #Parcels[#i].LeadMm - #Parcels[#i].LengthMm / 2;
+            IF #centreMm >= "DB_Settings".PusherPosMm[#lane] - "DB_Settings".FireWindowMm THEN
+               IF #PusherReady[#lane] AND NOT #LaneFull[#lane] AND #FiredSlot[#lane] < 0 THEN
+                  #FirePusher[#lane] := TRUE;
+                  #Parcels[#i].PusherFired := TRUE;
+                  #FiredSlot[#lane] := #i;
+               ELSE
+                  // lane full or pusher not available: send it to the reject chute
+                  #Parcels[#i].TargetLane := 0;
+               END_IF;
+            END_IF;
+         END_IF;
+      END_FOR;
+
+      FOR #lane := 1 TO 3 DO
+         IF #PusherDone[#lane] AND #FiredSlot[#lane] >= 0 THEN
+            #Parcels[#FiredSlot[#lane]].Active := FALSE;
+            #FiredSlot[#lane] := -1;
+            #DivertedLane := #lane;
+         ELSIF #FiredSlot[#lane] >= 0 THEN
+            // pusher faulted or the parcel moved on: release the lane after the window
+            IF NOT #Parcels[#FiredSlot[#lane]].Active
+               OR #Parcels[#FiredSlot[#lane]].LeadMm - #Parcels[#FiredSlot[#lane]].LengthMm
+                  > "DB_Settings".PusherPosMm[#lane] + 400
+            THEN
+               #FiredSlot[#lane] := -1;
+            END_IF;
+         END_IF;
+      END_FOR;
+   END_REGION
+
+   REGION Exit: rejected parcels and lost parcels
+      #rtExit(CLK := #ExitPE);
+      IF #rtExit.Q THEN
+         #slot := -1;
+         #oldestId := 2147483647;
+         FOR #i := 0 TO #LAST_SLOT DO
+            IF #Parcels[#i].Active
+               AND #Parcels[#i].LeadMm >= "DB_Settings".ExitPosMm - "DB_Settings".ExitToleranceMm
+               AND #Parcels[#i].Id < #oldestId
+            THEN
+               #oldestId := #Parcels[#i].Id;
+               #slot := #i;
+            END_IF;
+         END_FOR;
+         IF #slot >= 0 THEN
+            #Parcels[#slot].Active := FALSE;
+            #Rejected := TRUE;
+         ELSE
+            #Unexpected := TRUE;
+         END_IF;
+      END_IF;
+
+      FOR #i := 0 TO #LAST_SLOT DO
+         IF #Parcels[#i].Active AND #Parcels[#i].Measured
+            AND #Parcels[#i].LeadMm - #Parcels[#i].LengthMm > "DB_Settings".ExitPosMm + "DB_Settings".ExitToleranceMm
+         THEN
+            #Parcels[#i].Active := FALSE;
+            #Lost := TRUE;
+         END_IF;
+      END_FOR;
+   END_REGION
+
+   REGION Status
+      #Count := 0;
+      FOR #i := 0 TO #LAST_SLOT DO
+         IF #Parcels[#i].Active THEN
+            #Count := #Count + 1;
+         END_IF;
+      END_FOR;
+      IF #Count < #LAST_SLOT THEN
+         #Overflow := FALSE;
+      END_IF;
+   END_REGION
+END_FUNCTION_BLOCK

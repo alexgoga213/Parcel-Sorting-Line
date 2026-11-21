@@ -1,0 +1,105 @@
+FUNCTION_BLOCK "FB_LineControl"
+TITLE = 'Line state machine: start warning, run, controlled stop, fault, emergency stop'
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 1.0
+//  State
+//    0 STOPPED   conveyors off, ready for a start (auto) or jogging (manual)
+//    1 STARTING  horn sounds for StartWarning, then the conveyors start
+//    2 RUNNING   infeed C1 and sorter C2 run
+//    3 STOPPING  infeed stops, sorter keeps running until the belt is empty
+//    4 FAULT     everything off until the cause is gone and Reset is pressed
+//    5 ESTOP     emergency stop circuit open; Reset after it is released
+//
+//  The emergency stop itself is hard-wired through a safety relay that cuts the
+//  contactors; the PLC only monitors it (EStopOk) and handles the restart logic.
+
+   VAR_INPUT
+      AutoMode : Bool;
+      Start : Bool;                 // start request (button or HMI), edge evaluated here
+      Stop : Bool;                  // stop request, level
+      Reset : Bool;
+      EStopOk : Bool;
+      FaultActive : Bool;
+      BeltEmpty : Bool;             // nothing tracked on the sorter belt
+      StartWarning : Time := T#3S;
+      DrainTimeout : Time := T#12S;
+   END_VAR
+
+   VAR_OUTPUT
+      State : Int;
+      RunInfeed : Bool;
+      RunSorter : Bool;
+      Horn : Bool;
+      ReadyToStart : Bool;
+      ResetRequired : Bool;
+   END_VAR
+
+   VAR
+      rtStart {InstructionName := 'R_TRIG'; LibVersion := '1.0'} : R_TRIG;
+      tonWarning {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+      tonDrain {InstructionName := 'TON_TIME'; LibVersion := '1.0'} : TON_TIME;
+   END_VAR
+
+BEGIN
+   #rtStart(CLK := #Start);
+
+   REGION Overriding transitions
+      IF NOT #EStopOk THEN
+         #State := 5;
+      ELSIF #FaultActive AND #State >= 1 AND #State <= 3 THEN
+         #State := 4;
+      END_IF;
+   END_REGION
+
+   REGION Sequence
+      CASE #State OF
+         0:  // STOPPED
+            IF #rtStart.Q AND #AutoMode AND NOT #FaultActive AND NOT #Stop THEN
+               #State := 1;
+            END_IF;
+
+         1:  // STARTING
+            IF #Stop OR NOT #AutoMode THEN
+               #State := 0;
+            ELSIF #tonWarning.Q THEN
+               #State := 2;
+            END_IF;
+
+         2:  // RUNNING
+            IF #Stop OR NOT #AutoMode THEN
+               #State := 3;
+            END_IF;
+
+         3:  // STOPPING
+            IF #BeltEmpty OR #tonDrain.Q THEN
+               #State := 0;
+            ELSIF #rtStart.Q AND #AutoMode AND NOT #Stop THEN
+               #State := 2;
+            END_IF;
+
+         4:  // FAULT
+            IF #Reset AND NOT #FaultActive THEN
+               #State := 0;
+            END_IF;
+
+         5:  // ESTOP
+            IF #Reset AND #EStopOk THEN
+               #State := 0;
+            END_IF;
+
+         ELSE
+            #State := 4;
+      END_CASE;
+   END_REGION
+
+   REGION Timers and outputs
+      #tonWarning(IN := #State = 1, PT := #StartWarning);
+      #tonDrain(IN := #State = 3, PT := #DrainTimeout);
+
+      #RunSorter := #State = 2 OR #State = 3;
+      #RunInfeed := #State = 2;
+      #Horn := #State = 1;
+      #ReadyToStart := #State = 0 AND #AutoMode AND NOT #FaultActive AND #EStopOk;
+      #ResetRequired := #State = 4 OR #State = 5;
+   END_REGION
+END_FUNCTION_BLOCK

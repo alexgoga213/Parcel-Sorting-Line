@@ -1,0 +1,27 @@
+TYPE "UDT_Parcel"
+TITLE = 'One tracked parcel on the sorter conveyor'
+VERSION : 1.0
+   STRUCT
+      Active : Bool;          // slot is in use
+      Id : DInt;              // running parcel number
+      LeadMm : DInt;          // leading edge, mm downstream of the entry photo-eye
+      LengthMm : DInt;        // measured length (valid once Measured = TRUE)
+      Measured : Bool;        // trailing edge has passed the entry photo-eye
+      SizeClass : Int;        // 0 = unknown, 1 = small, 2 = medium, 3 = large
+      TargetLane : Int;       // 1..3 = lane, 0 = reject at end of line
+      PusherFired : Bool;     // a pusher has been commanded for this parcel
+   END_STRUCT;
+END_TYPE
+
+TYPE "UDT_LaneCounters"
+TITLE = 'Production counters shown on the HMI'
+VERSION : 1.0
+   STRUCT
+      Lane : Array[1..3] of DInt;
+      Rejected : DInt;
+      Total : DInt;
+      Oversize : DInt;
+      Lost : DInt;
+      PerHour : DInt;         // throughput over the last minute, scaled to parcels/hour
+   END_STRUCT;
+END_TYPE
